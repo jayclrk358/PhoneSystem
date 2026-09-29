@@ -35,47 +35,84 @@ around the 9608.
 | The craft menu (`Mute 2 7 2 3 8 #`) turns on remote syslog. Manual craft settings override the settings file | Built-in syslog receiver so the UI can show each phone's boot/provisioning log. The docs say to clear phones before deploying |
 | Some Avaya-only features don't work with a third-party PBX. See section 2a | Standard SIP features (hold, transfer, conference, MWI lamp, voicemail) are the target. Each one gets tested on a real phone |
 
-## 2a. Buttons, screen and busy lamps on the 9608
+## 2a. Buttons and screen (core goal)
+
+Remapping buttons and customizing the screen are **core requirements**. Busy lamps
+(seeing another extension's state) are **not needed**.
 
 The 9608 has 8 line/feature buttons, each with a red/green LED and a label on the
-display. It also has 4 softkeys under the display, fixed keys (Hold, Transfer,
-Conference, Messages, and others), a message-waiting lamp, and an optional
-BM12 button module.
+display (more pages by scrolling). It also has 4 softkeys under the display, fixed
+keys (Hold, Transfer, Conference, Messages, and others), a message-waiting lamp,
+and an optional BM12 button module.
 
-With a non-Avaya PBX, the phone runs in "SIPPING 19" (standard SIP) mode. On real
-Avaya systems, button programming and busy lamps come from Avaya's own servers
-(PPM and Communication Manager), not from the settings file. Community reports say
-`PHONEKEY`-style button settings in `46xxsettings.txt` don't take effect in
-third-party mode.
+### Why buttons are the hard part
 
-| Item | Status with our PBX |
+In normal third-party ("SIPPING 19") mode the button layout is fixed: the buttons
+are just lines. Community reports say `PHONEKEY`-style settings in
+`46xxsettings.txt` are ignored.
+
+On a real Avaya system, the phone runs in "AST" mode. After it registers, it
+downloads its button layout, contacts and other data from **PPM (Personal Profile
+Manager)**, a SOAP web service that normally runs on Avaya Session Manager. PPM
+can be served over **plain HTTP (port 80)**, so we can implement it ourselves
+without needing Avaya's certificates.
+
+### Track A (main plan): our own PPM service
+
+- The phone is switched to AST mode in `46xxsettings.txt`. After it registers, it
+  calls our PPM endpoint, and we answer with the button layout designed in the
+  web UI.
+- Button types we'll offer, each with a **custom label**:
+  - **Line** (call appearance)
+  - **Speed dial** (an external number or an internal extension)
+  - **Feature**: DND on/off, call forward, park/retrieve, pickup, voicemail,
+    paging, a conference room, and so on. Each one is implemented as a speed
+    dial of an Asterisk feature code.
+  - **Blank**
+- *Why feature buttons are speed dials of feature codes:* real Avaya feature
+  buttons are invoked through Communication Manager signaling that would have to
+  be reverse-engineered. Speed-dialing a feature code does the same job. The only
+  thing lost is the lamp showing the feature's state, and you've said lamps
+  aren't needed.
+- **Bonus:** PPM also delivers the **contacts list**, so the company directory
+  from the web UI shows up on every phone.
+- **Known risk:** community projects running phones in AST mode found that
+  **attended transfer and conference failed**, sometimes freezing the phone. The
+  first job in this track is to capture exactly what the phone sends in AST mode
+  for transfer and conference, and make it work. That fix goes either in the
+  Asterisk config or in a thin SIP adapter in front of Asterisk. We'll also answer
+  the phone's Avaya-specific SIP subscriptions cleanly so it doesn't show errors.
+- **Reference material:** Avaya's *PPM Interface Specification* and WSDL (Avaya
+  DevConnect, free registration), and a community PHP PPM server with Asterisk
+  patches (FreePBX forum, "Avaya 96x1 extended features").
+- **Go/no-go gate:** if transfer and conference can't be made reliable in AST
+  mode, we fall back to Track B.
+
+### Track B (fallback): standard mode
+
+The server can't push button layouts in standard mode. Firmware 7.x lets a
+**user** add Speed dial or Feature buttons from the phone itself (on a blank
+button: Custom → Add). Whether that works in third-party mode will be tested in
+Phase 1. If it does, the web UI can still manage labels and feature codes as a
+printable/reference layout, but someone has to key it in on each phone.
+
+### Screen customization (works in either mode)
+
+| Item | How |
 |---|---|
-| Message lamp + Messages key → voicemail | ✅ `MWISRVR` + `PSTN_VM_NUM` |
-| Caller name/number on screen | ✅ Asterisk sends P-Asserted-Identity. `DISPLAY_NAME_NUMBER` sets the order |
-| Dialing without pressing "Call" | ✅ `DIALPLAN` is generated from our routes |
-| Line buttons and their lamps for the phone's **own** calls (ringing/active/hold) | ✅ Native behavior |
-| Time, time zone, language, backlight, ring tone | ✅ Settings file (users can also change some on the phone) |
-| Relabeling or remapping softkeys / fixed keys | ❌ Set by the firmware |
-| Putting features (speed dial, park, paging) on line buttons from the server | ❌ Not in standard mode. Possible only with PPM emulation (below) |
-| **Busy lamp field** (a lamp showing another extension's state) | ❌ Not in standard mode. Needs Avaya's proprietary feature-status subscription, which has no public spec |
+| Logo / screensaver image | `LOGOS` + `CURRENT_LOGO` (SIP firmware). The web UI converts an uploaded image to the 9608's small monochrome format |
+| Screensaver timeout, backlight, language, date/time format, name/number order | Settings file (`SCREENSAVERON`, `DISPLAY_NAME_NUMBER`, …) |
+| **Custom idle screen** | The phone's built-in web browser shows a page from our server when idle (`WMLIDLEURI`), designed in the web UI (company name, date, the user's extension, announcements) |
+| **Phone apps** on the phone's browser (`WMLHOME`) | Company directory with click-to-dial, DND and call-forward toggles, voicemail and call-history views, custom menus |
+| Pop-up messages from the web UI | Avaya Push interface (`TPSLIST`, `SUBSCRIBELIST`): text alerts and announcements sent to one phone, a group, or all phones |
+| Main call screen layout, softkey row, fixed keys, fonts | ❌ Set by the firmware; can't be changed |
 
-Ways to get more:
+The 9608 SIP 7.x user guides document the browser, but Push and the idle-screen
+behavior still have to be confirmed on your phone in Phase 1.
 
-1. **PPM emulation (experimental, optional Phase 6).** Our server pretends to be
-   Avaya's Personal Profile Manager and the phone runs in "AST" mode. Community
-   projects got button labels, speed dials on the spare buttons, and a contacts
-   list this way. But attended transfer and conference **broke** in their tests,
-   and busy lamps would still need reverse-engineering. This is treated as a
-   research spike, not a promise.
-2. **The phone's built-in web browser (WML) and Push interface** (`WMLHOME`,
-   `WMLIDLEURI`, `TPSLIST`). Our server could show a live "who's on the phone"
-   status page on the display and pop up messages. That isn't lamps, and whether
-   the browser works in the SIP firmware **must be checked on a real 9608 early
-   in Phase 1**.
-3. **A phone with native busy lamps** (Yealink, Poly, Grandstream) for anyone
-   who truly needs them, such as a receptionist. Asterisk hints and standard
-   busy-lamp subscriptions will be generated for every extension, so those phones
-   work out of the box alongside the 9608s.
+If busy lamps are ever needed later, any standard phone with native busy lamps
+(Yealink, Poly, Grandstream) will work, because Asterisk hints are generated for
+every extension anyway.
 
 ## 3. Architecture
 
@@ -89,10 +126,12 @@ Ways to get more:
                  │        ▼                          ▼                           │
                  │   /etc/asterisk/generated/*.conf ─▶ Asterisk 22 (PJSIP) ◀────┼──SIP/RTP──▶ SIP trunk
                  │                                        ▲                     │            providers
-                 │   Provisioning HTTP server             │                     │
-                 │   (46xxsettings.txt, firmware)         │                     │
+                 │   Phone-facing HTTP (LAN only):        │                     │
+                 │   · provisioning (46xxsettings, fw)    │                     │
+                 │   · PPM service (buttons, contacts)    │                     │
+                 │   · phone apps (WML) + Push            │                     │
                  └─────────▲──────────────────────────────┼─────────────────────┘
-                           │ HTTP provisioning            │ SIP/RTP
+                           │ HTTP (config, PPM, apps)     │ SIP/RTP
                            └────────── Avaya 9608 phones ─┘
 ```
 
@@ -114,18 +153,29 @@ Ways to get more:
    client is strict (see section 2). A small syslog receiver collects the phones'
    boot logs for troubleshooting. Optionally it ships a `dnsmasq` DHCP config with
    option 242 if you want this server to hand out addresses to the phones.
-4. **API backend:** Python 3.12, FastAPI, SQLAlchemy with Alembic migrations.
+4. **PPM service:** a SOAP-over-HTTP endpoint that imitates Avaya's Personal
+   Profile Manager. It gives each phone its button layout (labels, speed dials,
+   feature buttons) and the contacts list (see section 2a, Track A).
+5. **Phone apps + Push:** WML pages served to the phone's browser (idle screen,
+   directory, DND and forward toggles, and so on), plus a Push sender for
+   pop-up messages.
+6. **API backend:** Python 3.12, FastAPI, SQLAlchemy with Alembic migrations.
    Includes admin authentication (argon2 hashes, sessions, CSRF protection), an
    audit log, and an async AMI client that feeds live registrations, active calls
    and trunk status to the UI over WebSocket.
-5. **Web UI:** React, TypeScript and Vite. Pages:
+7. **Web UI:** React, TypeScript and Vite. Pages:
    - Dashboard: registered phones, active calls, trunk status
    - Extensions · Phones (provisioning, firmware) · Trunks
+   - **Button designer:** a picture of the 9608 (and BM12) where you click a
+     button and set its type, label and target. Layouts are saved as templates
+     and assigned to phones or users, with per-phone overrides
+   - **Screen & branding:** logo, screensaver, idle-screen designer, phone apps
+   - **Messages:** send pop-up messages to phones
    - Inbound routes (DIDs) · Outbound routes (dial patterns, failover)
    - Ring groups · IVR / auto-attendant · Time conditions
    - Voicemail · Parking / feature codes · Music on hold
    - Call history (CDR) · System (network/NAT, SIP ports, codecs, backups) · Admin users
-6. **Packaging:** `install.sh` for Debian 12/13 and Ubuntu 24.04, with systemd
+8. **Packaging:** `install.sh` for Debian 12/13 and Ubuntu 24.04, with systemd
    units, an nftables firewall and fail2ban. Docker Compose is used for
    development and testing (host networking, because of the RTP port range).
 
@@ -136,6 +186,10 @@ Ways to get more:
 - `trunks`: name, type (`register` or `ip_auth`), host/port/transport, credentials, from-user/domain, codecs, max channels, default caller ID, enabled
 - `inbound_routes`: DID, optional caller-ID match, destination
 - `outbound_routes`: name, order, dial patterns (prepend/strip), trunk sequence (failover), caller-ID override, allowed-for-extensions
+- `button_layouts`: name, model (9608 / 9608 + BM12), assigned to phones or extensions
+- `buttons`: layout, position (page/slot, including module), type (`line` / `speed_dial` / `feature` / `blank`), label, target (number or feature)
+- `screen_profiles`: logo image, screensaver timeout, backlight, language, idle-screen content, enabled phone apps
+- `contacts`: company directory (also pushed to phones via PPM)
 - `ring_groups`, `ivrs` (greeting, digit→destination map), `time_conditions`, `feature_codes`, `moh_classes`
 - `system_settings`, `admin_users`, `audit_log`, `config_versions`
 
@@ -169,7 +223,8 @@ same destination picker.
   by default, and rate-limits login attempts.
 - The provisioning server is LAN-only. It has to be plain HTTP (the phone only
   trusts Avaya CAs), and it hands out SIP passwords and the phone admin password.
-  Per-phone credentials are only served to that phone's MAC/IP.
+  Per-phone credentials are only served to that phone's MAC/IP. The same
+  applies to PPM and the phone apps.
 - **Later:** TLS + SRTP between the phones and the PBX.
 
 ## 7. Phases
@@ -177,27 +232,36 @@ same destination picker.
 | Phase | Scope | Done when |
 |---|---|---|
 | **0: Foundation** | Repo skeleton, Docker dev environment with Asterisk, lint/test CI, DB migrations | `docker compose up` starts the stack and CI is green |
-| **1: Extensions + phones** | **Starts with a hardware check on a real 9608:** firmware version, TCP registration, auto-login, number of line buttons, and whether the browser/Push work. Then extensions CRUD, config generator, provisioning server, 46xxsettings generation, firmware upload, phone discovery | **Two 9608s register and call each other** |
-| **2: Trunks + routing** | Trunks, inbound DIDs, outbound routes, caller ID, failover | Calls to and from the outside world work |
-| **3: PBX features** | Voicemail + MWI lamp, ring groups, IVR, time conditions, parking, MOH, conferencing, feature codes | Feature checklist passes on a real 9608 |
-| **4: Visibility** | Live dashboard (registrations, calls, trunks), call history, optional recording | Dashboard shows live state |
-| **5: Hardening + ops** | Installer, firewall/fail2ban, backup/restore, HTTPS, upgrades, TLS/SRTP | Clean install on a fresh Debian box works end to end |
-| **6: 9608 extras (optional)** | Status/directory page on the phone's browser plus Push pop-ups (if Phase 1 shows they work). Research spike on PPM emulation for button labels, speed dials and busy lamps | Decide go/no-go from the spike results |
+| **1: Extensions + phones** | **Starts with a hardware check on a real 9608:** firmware version, TCP registration, auto-login, logo, whether the browser and Push work, whether Custom → Add works in standard mode, and a capture of the AST-mode PPM requests. Then extensions CRUD, config generator, provisioning server, 46xxsettings generation, firmware upload, phone discovery | **Two 9608s register and call each other** |
+| **2: Button remapping (PPM)** | PPM service, AST-mode transfer/conference fix, button designer UI, layout templates, contacts sync | **Go/no-go gate:** a layout designed in the web UI shows up on the phone, and transfer and conference work in AST mode. If not, switch to Track B |
+| **3: Screen + phone apps** | Logo/screensaver upload and conversion, idle-screen designer, WML phone apps, Push messages | Branding, idle screen and apps show on a real 9608 |
+| **4: Trunks + routing** | Trunks, inbound DIDs, outbound routes, caller ID, failover | Calls to and from the outside world work |
+| **5: PBX features** | Voicemail + MWI lamp, ring groups, IVR, time conditions, parking, MOH, conferencing, the feature codes the buttons use | Feature checklist passes on a real 9608 |
+| **6: Visibility** | Live dashboard (registrations, calls, trunks), call history, optional recording | Dashboard shows live state |
+| **7: Hardening + ops** | Installer, firewall/fail2ban, backup/restore, HTTPS for the admin UI, upgrades, TLS/SRTP | Clean install on a fresh Debian box works end to end |
+
+Buttons come before trunks on purpose. Whether the phones run in AST mode or
+standard mode affects how transfer, conference and feature codes are built, so
+it has to be settled early.
 
 ## 8. Testing
 
 - **Unit:** config generation, checked against known-good "golden" files for
-  given database states. Dial-pattern and routing logic.
+  given database states. Dial-pattern and routing logic. PPM responses checked
+  against SOAP captured from a real phone, and against the Avaya spec.
 - **Integration:** Asterisk in Docker, with SIPp or PJSUA softphones standing in
   for the phones and for a fake carrier trunk. Automated scripted calls cover
   internal calls, inbound, outbound, voicemail and IVR.
 - **Hardware checklist on a real 9608:** registration, hold, blind and attended
-  transfer, conference, MWI lamp, voicemail button, call history, re-provisioning.
+  transfer, conference (in AST mode too), MWI lamp, voicemail button, call history,
+  re-provisioning. Plus: button layout and labels appear, every speed dial and
+  feature button works, the contacts list syncs, and logo, idle screen, apps and
+  Push messages display.
 
 ## 9. Proposed repository layout
 
 ```
-backend/        FastAPI app: api/, models/, services/ (confgen, ami, provisioning), templates/
+backend/        FastAPI app: api/, models/, services/ (confgen, ami, provisioning, ppm, phoneapps), templates/
 frontend/       React + TypeScript (Vite)
 asterisk/       Base (static) Asterisk configs that #include the generated files
 deploy/         install.sh, systemd units, nftables, fail2ban, dnsmasq example
@@ -212,7 +276,11 @@ docs/           this plan, setup guide, 9608 provisioning guide
 - **Avaya 96x1 SIP firmware** for the 9608, from Avaya support or a reseller.
 - PoE switch (or power bricks) for the phones.
 - Access to your router's DHCP settings for option 242, or let this server provide DHCP for the phone network.
-- A SIP trunk account with a carrier, for Phase 2.
+- A SIP trunk account with a carrier, for Phase 4.
+- Ideally, Avaya's *PPM Interface Specification* from Avaya DevConnect (free
+  registration). It makes the button work much faster and safer than
+  reverse-engineering alone.
+- One spare 9608 that can be reset and experimented on.
 
 ## 11. Open questions
 
@@ -222,4 +290,5 @@ docs/           this plan, setup guide, 9608 provisioning guide
 4. Deployment: native install on the box (recommended), or Docker?
 5. Should this server run DHCP for the phones, or will you set option 242 on your existing router?
 6. Web stack OK? (FastAPI + React/TypeScript. The alternative is server-rendered HTML with htmx, which is simpler but less interactive.)
-7. How important are busy lamps, and for whom (everyone, or just a receptionist)? This decides whether Phase 6 is worth it, or whether one native-BLF phone covers it.
+7. What button layout do you picture? A sketch of one or two typical phones helps (for example: 3 lines, then speed dials, then DND, forward and park).
+8. Do any phones have (or will they get) a BM12 button module?
