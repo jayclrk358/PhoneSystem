@@ -3,6 +3,32 @@
 A Linux-based phone system (IP PBX) that Avaya 9608 desk phones register to over
 SIP, with SIP trunks to carriers, configured entirely through a web page.
 
+## Status
+
+| Phase | State |
+|---|---|
+| 0: Foundation | **Done.** Repo layout, `make dev`, CI (lint, unit, real-Asterisk integration, UI) |
+| 1: Extensions + phones | **Built and tested in simulation; waiting on the hardware check.** Extensions, phone provisioning (`46xxsettings.txt` with auto-login), firmware upload, phone discovery, phone logs, config apply/rollback, web UI, installer. Two simulated 9608s (SIPp over TCP) register and call each other in the integration tests. Next: run [HARDWARE_CHECKLIST.md](HARDWARE_CHECKLIST.md) on a real 9608 |
+| 2 onward | Not started |
+
+Changes from the original plan, decided while building Phase 0/1:
+- **Asterisk 20 LTS** from Ubuntu 24.04's own packages instead of 22. It's
+  supported until late 2027 and needs no source build. The generated config
+  also works on 22.
+- **No nginx.** The phone-facing server is our own small HTTP server that
+  writes classic, explicit responses, because it has to decide per phone what to
+  send (auto-login lines only go to the phone they belong to). curl (the same
+  libcurl family the phones use) is tested against it.
+- **`make dev` instead of Docker Compose** for development. It runs a private
+  Asterisk plus the app with no Docker needed. Docker support can come later.
+- **How phones are identified:** the server looks up the requesting IP in its
+  own ARP table, which works when phones are on the same network segment (VLAN)
+  as the server. A MAC address in the User-Agent (if the firmware sends one) is
+  used to list the phone, but **auto-login credentials only go to phones whose
+  MAC the ARP table confirms**. Otherwise anyone on the LAN could claim a phone's
+  MAC and receive its SIP password. Phones on another segment still get the
+  shared settings, and people log in on the keypad.
+
 ---
 
 ## 1. Core decision: use Asterisk, don't write a SIP stack
@@ -11,7 +37,7 @@ Writing SIP, RTP, codecs, NAT traversal, DTMF, SRTP and so on from scratch would
 take years, and the result would not be reliable.
 Instead:
 
-- **Call engine:** Asterisk 22 LTS using the PJSIP channel driver. It is proven,
+- **Call engine:** Asterisk 20+ LTS using the PJSIP channel driver. It is proven,
   free, and handles SIP, RTP, voicemail, conferencing and parking.
 - **Our code is everything around it:** the database, config generation,
   phone provisioning, the web UI/API, live status and security.
@@ -30,7 +56,7 @@ around the 9608.
 | The 96x1 SIP firmware talks SIP over **TCP (or TLS) only, not UDP** | Asterisk gets a TCP transport for the phones. UDP stays available for trunks |
 | `SIP_CONTROLLER_LIST` needs a **numeric IPv4 address**, not a hostname | The generator always writes the server's IP |
 | Firmware 7.1 supports `FORCE_SIP_USERNAME` / `FORCE_SIP_EXTENSION` / `FORCE_SIP_PASSWORD`, so phones can log in **without anyone typing** | Zero-touch login: assign a phone (by MAC) to an extension in the UI and it logs itself in. **The password is limited to 13 characters**, so fail2ban and IP restrictions matter more |
-| The firmware's HTTP client (libcurl) is strict. It rejects some simple HTTP servers (Python `http.server` is known to fail) and marks the download as failed | Provisioning is served by nginx, or by a handler that sends explicit `HTTP/1.1 200`, `Content-Length` and `Connection: close`. Covered by a test |
+| The firmware's HTTP client (libcurl) is strict. It rejects some simple HTTP servers (Python `http.server` is known to fail) and marks the download as failed | Provisioning uses our own server that sends explicit `HTTP/1.1 200`, `Content-Length`, `Last-Modified` and `Connection: close`. Covered by byte-level tests and a curl test |
 | The phone only trusts Avaya's own certificate authorities, so it can't do HTTPS provisioning against our server | Provisioning uses plain HTTP and **must be LAN-only**. Firmware images are signed by Avaya, so HTTP is fine for those |
 | The craft menu (`Mute 2 7 2 3 8 #`) turns on remote syslog. Manual craft settings override the settings file | Built-in syslog receiver so the UI can show each phone's boot/provisioning log. The docs say to clear phones before deploying |
 | Some Avaya-only features don't work with a third-party PBX. See section 2a | Standard SIP features (hold, transfer, conference, MWI lamp, voicemail) are the target. Each one gets tested on a real phone |
@@ -124,7 +150,7 @@ every extension anyway.
                  │   API service (Python / FastAPI) ─── SQLite (or Postgres)     │
                  │        │ renders configs          │ AMI (live status/control)│
                  │        ▼                          ▼                           │
-                 │   /etc/asterisk/generated/*.conf ─▶ Asterisk 22 (PJSIP) ◀────┼──SIP/RTP──▶ SIP trunk
+                 │   /etc/asterisk/phonesystem/*.conf ─▶ Asterisk 20+ (PJSIP) ◀──┼──SIP/RTP──▶ SIP trunk
                  │                                        ▲                     │            providers
                  │   Phone-facing HTTP (LAN only):        │                     │
                  │   · provisioning (46xxsettings, fw)    │                     │
@@ -137,7 +163,7 @@ every extension anyway.
 
 ### Components
 
-1. **Asterisk 22 LTS (PJSIP):** calls, voicemail (`app_voicemail`), ConfBridge,
+1. **Asterisk 20+ LTS (PJSIP):** calls, voicemail (`app_voicemail`), ConfBridge,
    parking, music on hold, CDR.
 2. **Config generator:** turns database rows into Jinja2 templates, which render
    `pjsip.generated.conf`, `extensions.generated.conf`, `voicemail.generated.conf`,
@@ -149,8 +175,8 @@ every extension anyway.
    per-phone sections) and serves the upgrade script and the uploaded firmware.
    It logs every fetch, so a new phone shows up in the UI by MAC address and can
    be assigned to an extension; the phone then logs itself in (`FORCE_SIP_*`).
-   Files are served by nginx over plain HTTP on the LAN, because the phone's HTTP
-   client is strict (see section 2). A small syslog receiver collects the phones'
+   Files are served over plain HTTP on the LAN by our own strict server, because
+   the phone's HTTP client is picky (see section 2). A small syslog receiver collects the phones'
    boot logs for troubleshooting. Optionally it ships a `dnsmasq` DHCP config with
    option 242 if you want this server to hand out addresses to the phones.
 4. **PPM service:** a SOAP-over-HTTP endpoint that imitates Avaya's Personal
@@ -159,7 +185,7 @@ every extension anyway.
 5. **Phone apps + Push:** WML pages served to the phone's browser (idle screen,
    directory, DND and forward toggles, and so on), plus a Push sender for
    pop-up messages.
-6. **API backend:** Python 3.12, FastAPI, SQLAlchemy with Alembic migrations.
+6. **API backend:** Python 3.11+, FastAPI, SQLAlchemy with Alembic migrations.
    Includes admin authentication (argon2 hashes, sessions, CSRF protection), an
    audit log, and an async AMI client that feeds live registrations, active calls
    and trunk status to the UI over WebSocket.
@@ -175,9 +201,10 @@ every extension anyway.
    - Ring groups · IVR / auto-attendant · Time conditions
    - Voicemail · Parking / feature codes · Music on hold
    - Call history (CDR) · System (network/NAT, SIP ports, codecs, backups) · Admin users
-8. **Packaging:** `install.sh` for Debian 12/13 and Ubuntu 24.04, with systemd
-   units, an nftables firewall and fail2ban. Docker Compose is used for
-   development and testing (host networking, because of the RTP port range).
+8. **Packaging:** `deploy/install.sh` for Ubuntu 24.04 (or any Debian-based
+   system with an Asterisk 20+ package) and a hardened systemd unit. The
+   nftables firewall and fail2ban come in Phase 7. `make dev` runs a private
+   Asterisk plus the app for development.
 
 ## 4. Data model (core)
 
@@ -231,7 +258,7 @@ same destination picker.
 
 | Phase | Scope | Done when |
 |---|---|---|
-| **0: Foundation** | Repo skeleton, Docker dev environment with Asterisk, lint/test CI, DB migrations | `docker compose up` starts the stack and CI is green |
+| **0: Foundation** | Repo skeleton, dev stack with a private Asterisk, lint/test CI, DB migrations | `make dev` starts the stack and CI is green |
 | **1: Extensions + phones** | **Starts with a hardware check on a real 9608:** firmware version, TCP registration, auto-login, logo, whether the browser and Push work, whether Custom → Add works in standard mode, and a capture of the AST-mode PPM requests. Then extensions CRUD, config generator, provisioning server, 46xxsettings generation, firmware upload, phone discovery | **Two 9608s register and call each other** |
 | **2: Button remapping (PPM)** | PPM service, AST-mode transfer/conference fix, button designer UI, layout templates, contacts sync | **Go/no-go gate:** a layout designed in the web UI shows up on the phone, and transfer and conference work in AST mode. If not, switch to Track B |
 | **3: Screen + phone apps** | Logo/screensaver upload and conversion, idle-screen designer, WML phone apps, Push messages | Branding, idle screen and apps show on a real 9608 |
@@ -249,7 +276,7 @@ it has to be settled early.
 - **Unit:** config generation, checked against known-good "golden" files for
   given database states. Dial-pattern and routing logic. PPM responses checked
   against SOAP captured from a real phone, and against the Avaya spec.
-- **Integration:** Asterisk in Docker, with SIPp or PJSUA softphones standing in
+- **Integration:** a private real Asterisk, with SIPp scenarios standing in
   for the phones and for a fake carrier trunk. Automated scripted calls cover
   internal calls, inbound, outbound, voicemail and IVR.
 - **Hardware checklist on a real 9608:** registration, hold, blind and attended
@@ -261,13 +288,11 @@ it has to be settled early.
 ## 9. Proposed repository layout
 
 ```
-backend/        FastAPI app: api/, models/, services/ (confgen, ami, provisioning, ppm, phoneapps), templates/
+backend/        FastAPI app: phonesystem/{api,services,templates,migrations}, tests/, scripts/devstack.py
 frontend/       React + TypeScript (Vite)
 asterisk/       Base (static) Asterisk configs that #include the generated files
-deploy/         install.sh, systemd units, nftables, fail2ban, dnsmasq example
-docker/         Dev/test compose setup
-tests/          unit + integration (SIPp/PJSUA scenarios)
-docs/           this plan, setup guide, 9608 provisioning guide
+deploy/         install.sh, systemd unit, dnsmasq example (firewall/fail2ban in Phase 7)
+docs/           this plan, setup guide, 9608 hardware checklist
 ```
 
 ## 10. What you'll need

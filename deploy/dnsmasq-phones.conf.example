@@ -1,0 +1,19 @@
+# Example dnsmasq config, only needed if THIS server should hand out IP
+# addresses to the phones (most people set option 242 on their router instead).
+#
+#   sudo apt install dnsmasq
+#   sudo cp dnsmasq-phones.conf.example /etc/dnsmasq.d/phones.conf   # then edit it
+#   sudo systemctl restart dnsmasq
+#
+# Change every address below to match your network. Never run two DHCP
+# servers on the same network.
+
+interface=eth0
+dhcp-range=192.168.10.100,192.168.10.200,255.255.255.0,12h
+dhcp-option=option:router,192.168.10.1
+dhcp-option=option:dns-server,192.168.10.1
+dhcp-option=option:ntp-server,192.168.10.5
+
+# Avaya phones: fetch settings/firmware from this server over HTTP and use SIP
+# (SIG=2 converts phones still running H.323 firmware). 192.168.10.5 = this server.
+dhcp-option=242,"HTTPSRVR=192.168.10.5,SIG=2"
