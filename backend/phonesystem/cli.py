@@ -2,9 +2,11 @@
 
 import argparse
 import asyncio
+import errno
 import getpass
 import logging
 import os
+import socket
 import sys
 from pathlib import Path
 
@@ -36,6 +38,26 @@ def _restrict_db_file(db_url: str) -> None:
             p.chmod(0o600)
 
 
+class PortError(SystemExit):
+    """Exit with a plain explanation when a port can't be used."""
+
+
+def port_error(exc: OSError, port: int, proto: str, what: str, env_var: str) -> PortError:
+    if exc.errno == errno.EADDRINUSE:
+        reason = "another program is already using it"
+    elif exc.errno == errno.EACCES:
+        reason = (
+            "ports below 1024 need the CAP_NET_BIND_SERVICE capability (the systemd unit grants it)"
+        )
+    else:
+        reason = exc.strerror or str(exc)
+    return PortError(
+        f"PhoneSystem can't listen on port {port}/{proto} ({what}): {reason}. "
+        f"Stop the other program, or set {env_var} to a free port in "
+        "/etc/phonesystem/phonesystem.env and restart (sudo systemctl restart phonesystem)."
+    )
+
+
 async def _serve(cfg: AppConfig) -> None:
     import uvicorn
 
@@ -48,11 +70,27 @@ async def _serve(cfg: AppConfig) -> None:
     db = _prepare(cfg)
     app = create_app(cfg, db)
 
+    # uvicorn only reports a busy port after startup; check the web port first
+    # so every port problem gets the same clear message.
+    _check_tcp_port(cfg.admin_host, cfg.admin_port, "web UI", "PHONESYSTEM_ADMIN_PORT")
     prov = ProvisioningServer(ProvisioningService(db, FirmwareStore(cfg.firmware_dir)))
-    prov_server = await prov.start(cfg.provisioning_host, cfg.provisioning_port)
+    try:
+        prov_server = await prov.start(cfg.provisioning_host, cfg.provisioning_port)
+    except OSError as exc:
+        raise port_error(
+            exc, cfg.provisioning_port, "tcp", "phone settings", "PHONESYSTEM_PROVISIONING_PORT"
+        ) from exc
     syslog_transport = None
     if cfg.syslog_port:
-        syslog_transport = await SyslogReceiver(db).start(cfg.provisioning_host, cfg.syslog_port)
+        try:
+            syslog_transport = await SyslogReceiver(db).start(
+                cfg.provisioning_host, cfg.syslog_port
+            )
+        except OSError as exc:
+            prov_server.close()
+            raise port_error(
+                exc, cfg.syslog_port, "udp", "phone logs", "PHONESYSTEM_SYSLOG_PORT"
+            ) from exc
 
     web = uvicorn.Server(
         uvicorn.Config(
@@ -74,6 +112,15 @@ async def _serve(cfg: AppConfig) -> None:
         prov_server.close()
         if syslog_transport:
             syslog_transport.close()
+
+
+def _check_tcp_port(host: str, port: int, what: str, env_var: str) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError as exc:
+            raise port_error(exc, port, "tcp", what, env_var) from exc
 
 
 def cmd_serve(cfg: AppConfig, _args) -> int:

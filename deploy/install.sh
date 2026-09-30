@@ -48,6 +48,16 @@ command -v apt-get >/dev/null || die "this installer needs a Debian/Ubuntu syste
 
 have_systemd() { [[ -d /run/systemd/system ]]; }
 
+# Name of the program listening on a port ($1 = tcp|udp, $2 = port), or nothing.
+port_user() {
+  local flags=-ltnp
+  [[ $1 == udp ]] && flags=-lunp
+  # "|| true": a free port means grep matches nothing, which must not trip set -e.
+  { ss -H $flags "sport = :$2" 2>/dev/null | grep -oE 'users:\(\("[^"]+"' | head -1 | cut -d'"' -f2; } || true
+}
+env_get() { grep -E "^$1=" "$ENV_FILE" | cut -d= -f2-; }
+env_set() { sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"; }
+
 # Scratch directories, removed however the script ends.
 CLEANUP=()
 trap 'rm -rf ${CLEANUP[@]+"${CLEANUP[@]}"}' EXIT
@@ -63,7 +73,7 @@ if ! apt-cache show asterisk >/dev/null 2>&1; then
   die "no 'asterisk' package in your apt sources. Use Ubuntu 24.04 LTS (universe), or install Asterisk 20+ yourself and re-run."
 fi
 apt-get install -y -qq asterisk asterisk-modules asterisk-core-sounds-en \
-  python3 python3-venv openssl curl ca-certificates >/dev/null
+  python3 python3-venv openssl curl ca-certificates iproute2 >/dev/null
 
 AST_VERSION=$(asterisk -V | grep -oE '[0-9]+' | head -1)
 [[ ${AST_VERSION:-0} -ge 20 ]] || die "Asterisk 20 or newer is required (found $(asterisk -V))"
@@ -205,6 +215,37 @@ if [[ ! -f $ETC_DIR/tls/cert.pem ]]; then
   chmod 0644 "$ETC_DIR/tls/cert.pem"
 fi
 
+# ---------------------------------------------------------------- ports
+say "Checking ports"
+# Our own service holds its ports while running; stop it so only real conflicts show.
+if have_systemd; then systemctl stop phonesystem 2>/dev/null || true; fi
+
+# If another program already uses one of our ports, move to a fallback port
+# (and say so) instead of failing to start.
+choose_port() { # $1 env var, $2 tcp|udp, $3 fallback port, $4 what it's for
+  local port owner alt_owner
+  port=$(env_get "$1")
+  owner=$(port_user "$2" "$port")
+  if [[ -z $owner || $owner == phonesystem ]]; then
+    echo "  $port/$2 ($4): free"
+    return
+  fi
+  alt_owner=$(port_user "$2" "$3")
+  [[ -z $alt_owner || $alt_owner == phonesystem ]] \
+    || die "port $port/$2 ($4) is used by '$owner', and the fallback $3/$2 by '$alt_owner'. Stop one of them and re-run."
+  warn "port $port/$2 ($4) is already used by '$owner', so PhoneSystem will use port $3 instead."
+  env_set "$1" "$3"
+}
+choose_port PHONESYSTEM_ADMIN_PORT tcp 8443 "web UI"
+choose_port PHONESYSTEM_PROVISIONING_PORT tcp 8080 "phone settings"
+choose_port PHONESYSTEM_SYSLOG_PORT udp 5514 "phone logs"
+for proto in tcp udp; do
+  owner=$(port_user $proto 5060)
+  if [[ -n $owner && $owner != asterisk ]]; then
+    warn "port 5060/$proto (SIP) is used by '$owner'. Asterisk can't take calls until that program is stopped."
+  fi
+done
+
 # ---------------------------------------------------------------- Asterisk
 say "Configuring Asterisk"
 BACKUP=$AST_ETC.before-phonesystem
@@ -220,6 +261,16 @@ chown asterisk:asterisk "$AST_ETC/manager.conf"
 chmod 0640 "$AST_ETC/manager.conf"
 # Asterisk #includes the generated files through this link.
 ln -sfn "$DATA_DIR/asterisk-current" "$AST_ETC/phonesystem"
+if have_systemd; then
+  # apt may already have started Asterisk with its own settings (including
+  # different AMI credentials). Restart it so it runs ours from here on.
+  systemctl enable --quiet asterisk
+  systemctl restart asterisk
+  for _ in $(seq 30); do
+    asterisk -rx "core waitfullybooted" >/dev/null 2>&1 && break
+    sleep 1
+  done
+fi
 
 # ---------------------------------------------------------------- database & first config
 say "Setting up the database and generating the first config"
@@ -233,10 +284,21 @@ if have_systemd; then
   install -m 0644 "$REPO/deploy/phonesystem.service" /etc/systemd/system/phonesystem.service
   systemctl daemon-reload
   systemctl enable --quiet asterisk phonesystem
-  systemctl restart asterisk
   systemctl restart phonesystem
-  sleep 2
-  systemctl is-active --quiet phonesystem || warn "phonesystem didn't start; see: journalctl -u phonesystem"
+  started=""
+  for _ in $(seq 20); do
+    sleep 1
+    if curl -skf -o /dev/null "https://127.0.0.1:$(env_get PHONESYSTEM_ADMIN_PORT)/api/health"; then
+      started=1
+      break
+    fi
+  done
+  if [[ -z $started ]]; then
+    systemctl status phonesystem --no-pager --lines=0 >&2 || true
+    echo "---- last log lines (journalctl -u phonesystem) ----" >&2
+    journalctl -u phonesystem --no-pager -n 40 -o cat >&2 || true
+    die "PhoneSystem didn't start. The log above says why; please send it over if it isn't clear."
+  fi
 else
   warn "systemd isn't running, so services weren't installed. Start them by hand:
   asterisk -U asterisk -G asterisk
@@ -245,14 +307,20 @@ else
 fi
 
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+WEB_PORT=$(env_get PHONESYSTEM_ADMIN_PORT)
+PROV_PORT=$(env_get PHONESYSTEM_PROVISIONING_PORT)
+LOG_PORT=$(env_get PHONESYSTEM_SYSLOG_PORT)
+[[ $WEB_PORT == 443 ]] && WEB_URL="https://${IP:-this-server}/" || WEB_URL="https://${IP:-this-server}:$WEB_PORT/"
 cat <<EOF
 
 PhoneSystem is installed.
 
-  Web UI:  https://${IP:-this-server}/   (self-signed certificate: accept the browser warning)
-  Next:    open the web UI, create the admin account, and follow "Getting started".
+  Web UI:  $WEB_URL   (self-signed certificate: accept the browser warning)
+  Next:    open the web UI right away, create the admin account, and follow
+           "Getting started". Until an admin exists, anyone who can reach the
+           web UI can create one.
 
-Ports to allow from the phone network: 80/tcp (phone settings), 5060/tcp+udp (SIP),
-10000-20000/udp (audio), 514/udp (phone logs), 443/tcp (web UI).
-Don't expose 80, 514 or 5060 to the internet.
+Ports to allow from the phone network: $PROV_PORT/tcp (phone settings), 5060/tcp+udp (SIP),
+10000-20000/udp (audio), $LOG_PORT/udp (phone logs), $WEB_PORT/tcp (web UI).
+Don't expose $PROV_PORT, $LOG_PORT or 5060 to the whole internet.
 EOF
