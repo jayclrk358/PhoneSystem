@@ -48,12 +48,22 @@ command -v apt-get >/dev/null || die "this installer needs a Debian/Ubuntu syste
 
 have_systemd() { [[ -d /run/systemd/system ]]; }
 
-# Name of the program listening on a port ($1 = tcp|udp, $2 = port), or nothing.
+# Who is using a port ($1 = tcp|udp, $2 = port)? Prints a description, or
+# nothing if the port is free. Docker-published ports count even when Docker
+# forwards them with iptables and no process is visibly listening.
 port_user() {
-  local flags=-ltnp
+  local flags=-ltnp name container=""
   [[ $1 == udp ]] && flags=-lunp
   # "|| true": a free port means grep matches nothing, which must not trip set -e.
-  { ss -H $flags "sport = :$2" 2>/dev/null | grep -oE 'users:\(\("[^"]+"' | head -1 | cut -d'"' -f2; } || true
+  name=$({ ss -H $flags "sport = :$2" 2>/dev/null | grep -oE 'users:\(\("[^"]+"' | head -1 | cut -d'"' -f2; } || true)
+  if command -v docker >/dev/null; then
+    container=$(docker ps --filter "publish=$2/$1" --format '{{.Names}}' 2>/dev/null | head -1 || true)
+  fi
+  if [[ -n $container ]]; then
+    echo "Docker container '$container'"
+  elif [[ -n $name ]]; then
+    echo "'$name'"
+  fi
 }
 env_get() { grep -E "^$1=" "$ENV_FILE" | cut -d= -f2-; }
 env_set() { sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"; }
@@ -220,29 +230,36 @@ say "Checking ports"
 # Our own service holds its ports while running; stop it so only real conflicts show.
 if have_systemd; then systemctl stop phonesystem 2>/dev/null || true; fi
 
-# If another program already uses one of our ports, move to a fallback port
-# (and say so) instead of failing to start.
-choose_port() { # $1 env var, $2 tcp|udp, $3 fallback port, $4 what it's for
-  local port owner alt_owner
-  port=$(env_get "$1")
-  owner=$(port_user "$2" "$port")
-  if [[ -z $owner || $owner == phonesystem ]]; then
-    echo "  $port/$2 ($4): free"
+# If another program already uses one of our ports, move to the first free
+# port in the candidate list (and say so) instead of failing to start. A port
+# chosen on an earlier run is kept as long as it's still free.
+choose_port() { # $1 env var, $2 tcp|udp, $3 what it's for, $4... candidate ports
+  local var=$1 proto=$2 what=$3 current owner candidate other
+  shift 3
+  current=$(env_get "$var")
+  owner=$(port_user "$proto" "$current")
+  if [[ -z $owner || $owner == "'phonesystem'" ]]; then
+    echo "  $current/$proto ($what): free"
     return
   fi
-  alt_owner=$(port_user "$2" "$3")
-  [[ -z $alt_owner || $alt_owner == phonesystem ]] \
-    || die "port $port/$2 ($4) is used by '$owner', and the fallback $3/$2 by '$alt_owner'. Stop one of them and re-run."
-  warn "port $port/$2 ($4) is already used by '$owner', so PhoneSystem will use port $3 instead."
-  env_set "$1" "$3"
+  for candidate in "$@"; do
+    [[ $candidate == "$current" ]] && continue
+    other=$(port_user "$proto" "$candidate")
+    if [[ -z $other || $other == "'phonesystem'" ]]; then
+      warn "port $current/$proto ($what) is already used by $owner, so PhoneSystem will use port $candidate instead."
+      env_set "$var" "$candidate"
+      return
+    fi
+  done
+  die "port $current/$proto ($what) is used by $owner, and so are all the fallbacks ($*). Set $var in $ENV_FILE to a free port and re-run."
 }
-choose_port PHONESYSTEM_ADMIN_PORT tcp 8443 "web UI"
-choose_port PHONESYSTEM_PROVISIONING_PORT tcp 8080 "phone settings"
-choose_port PHONESYSTEM_SYSLOG_PORT udp 5514 "phone logs"
+choose_port PHONESYSTEM_ADMIN_PORT tcp "web UI" 443 8443 9443 10443 18443 28443
+choose_port PHONESYSTEM_PROVISIONING_PORT tcp "phone settings" 80 8080 8081 8088 18080 28080
+choose_port PHONESYSTEM_SYSLOG_PORT udp "phone logs" 514 5514 10514 20514
 for proto in tcp udp; do
   owner=$(port_user $proto 5060)
-  if [[ -n $owner && $owner != asterisk ]]; then
-    warn "port 5060/$proto (SIP) is used by '$owner'. Asterisk can't take calls until that program is stopped."
+  if [[ -n $owner && $owner != "'asterisk'" ]]; then
+    warn "port 5060/$proto (SIP) is used by $owner. Asterisk can't take calls until that is stopped."
   fi
 done
 
