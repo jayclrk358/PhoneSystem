@@ -5,7 +5,7 @@ import { formatBytes, formatTime } from "../format";
 import { useAction, useApi } from "../hooks";
 
 export function FirmwarePage() {
-  const fw = useApi<FirmwareInfo>("/api/firmware");
+  const fw = useApi<FirmwareInfo>("/api/firmware", undefined, ["firmware"]);
   const fileInput = useRef<HTMLInputElement>(null);
   const [result, setResult] = useState<{ saved: string[]; skipped: string[] } | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);

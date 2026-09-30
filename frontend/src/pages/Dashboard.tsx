@@ -13,18 +13,21 @@ import { dateRange, formatMac, option242, timeAgo } from "../format";
 import { useApi } from "../hooks";
 
 export function DashboardPage() {
-  const status = useApi<LiveStatus>("/api/status", 5000);
-  const extensions = useApi<Extension[]>("/api/extensions");
-  const phones = useApi<Phone[]>("/api/phones", 10000);
-  const settings = useApi<Settings>("/api/settings");
-  const firmware = useApi<FirmwareInfo>("/api/firmware");
-  const requests = useApi<ProvisioningRequest[]>("/api/provisioning/requests?limit=8", 10000);
+  const status = useApi<LiveStatus>("/api/status", 5000, ["status"]);
+  const extensions = useApi<Extension[]>("/api/extensions", undefined, ["extensions"]);
+  const phones = useApi<Phone[]>("/api/phones", 10000, ["phones"]);
+  const settings = useApi<Settings>("/api/settings", undefined, ["settings"]);
+  const firmware = useApi<FirmwareInfo>("/api/firmware", undefined, ["firmware"]);
+  const requests = useApi<ProvisioningRequest[]>("/api/provisioning/requests?limit=8", 10000, [
+    "provisioning",
+  ]);
   const today = dateRange("today");
   const calls = useApi<CallStats>(
     `/api/calls/stats?start=${encodeURIComponent(today.start.toISOString())}` +
       `&end=${encodeURIComponent(today.end.toISOString())}` +
       `&tz=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC")}`,
     15000,
+    ["calls"],
   );
 
   const exts = extensions.data ?? [];

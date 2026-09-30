@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from ..db import Database
 from ..models import CallRecord, Extension, Setting
+from .events import Notify
 
 log = logging.getLogger(__name__)
 
@@ -166,10 +167,13 @@ def to_record(fields: dict[str, str]) -> CallRecord | None:
 class CdrImporter:
     """Imports new lines from the CDR file. Safe to call from several threads."""
 
-    def __init__(self, db: Database, path: Path):
+    def __init__(self, db: Database, path: Path, notify: Notify | None = None):
         self.db = db
         self.path = path
+        self.notify = notify
         self._lock = threading.Lock()
+        # (inode, size) after the last pass: skip the database when unchanged.
+        self._last_seen: tuple[int, int] | None = None
 
     def import_new(self) -> int:
         with self._lock:
@@ -178,7 +182,10 @@ class CdrImporter:
                 imported, more = self._import_chunk()
                 total += imported
                 if not more:
-                    return total
+                    break
+        if total and self.notify:
+            self.notify("calls")
+        return total
 
     def _import_chunk(self) -> tuple[int, bool]:
         try:
@@ -187,6 +194,8 @@ class CdrImporter:
             return 0, False
         except PermissionError:
             log.warning("can't read call records at %s (permission denied)", self.path)
+            return 0, False
+        if (st.st_ino, st.st_size) == self._last_seen:
             return 0, False
 
         with self.db.session() as session:
@@ -197,6 +206,7 @@ class CdrImporter:
             if state.get("inode") != st.st_ino or st.st_size < offset:
                 offset = 0
             if st.st_size == offset:
+                self._last_seen = (st.st_ino, st.st_size)
                 return 0, False
 
             try:
@@ -224,6 +234,8 @@ class CdrImporter:
 
             imported = self._store(session, records)
             new_state = {"inode": st.st_ino, "offset": offset + end}
+            if offset + end == st.st_size:
+                self._last_seen = (st.st_ino, st.st_size)
             if state_row is None:
                 session.add(Setting(key=IMPORT_STATE_KEY, value=new_state))
             else:

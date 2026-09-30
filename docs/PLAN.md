@@ -9,6 +9,7 @@ SIP, with SIP trunks to carriers, configured entirely through a web page.
 |---|---|
 | 0: Foundation | **Done.** Repo layout, `make dev`, CI (lint, unit, real-Asterisk integration, UI) |
 | 1: Extensions + phones | **Built and tested in simulation; waiting on the hardware check.** Extensions, phone provisioning (`46xxsettings.txt` with auto-login), firmware upload, phone discovery, phone logs, config apply/rollback, web UI, installer. Two simulated 9608s (SIPp over TCP) register and call each other in the integration tests. Next: run [HARDWARE_CHECKLIST.md](HARDWARE_CHECKLIST.md) on a real 9608 |
+| Extra (from Phase 6, done early on request) | **Done.** Call tracking (call log, number lookup, per-extension and daily stats, CSV export) and live page updates (Server-Sent Events) |
 | 2 onward | Not started |
 
 Changes from the original plan, decided while building Phase 0/1:

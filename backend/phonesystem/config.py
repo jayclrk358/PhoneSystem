@@ -48,8 +48,9 @@ class AppConfig(BaseSettings):
     # Asterisk's cdr_custom writes one line per call leg here (asterisk/cdr_custom.conf);
     # we import it into the call log. Asterisk 20 only writes inside its log dir.
     cdr_file: Path = Path("/var/log/asterisk/cdr-custom/phonesystem-calls.csv")
-    # How often to import new call records, in seconds.
-    cdr_import_interval: float = 5.0
+    # How often to check for new call records, in seconds (a cheap stat() call
+    # when nothing changed).
+    cdr_import_interval: float = 1.0
 
     @property
     def db_url(self) -> str:

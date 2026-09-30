@@ -952,3 +952,33 @@ td.num {
   height: 3px;
   border-radius: 2px;
 }
+
+/* ---------------------------------------------------------------- live */
+
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-right: 0.25rem;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.live-on .live-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-soft);
+}
+
+@media (max-width: 760px) {
+  .live {
+    font-size: 0;
+    gap: 0;
+  }
+}

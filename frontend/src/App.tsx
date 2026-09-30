@@ -26,10 +26,12 @@ export function App() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
+  const sessionEnded = useCallback(() => setAuth((a) => (a ? { ...a, user: null } : a)), []);
+
   useEffect(() => {
     refresh();
-    setUnauthorizedHandler(() => setAuth((a) => (a ? { ...a, user: null } : a)));
-  }, [refresh]);
+    setUnauthorizedHandler(sessionEnded);
+  }, [refresh, sessionEnded]);
 
   if (error) {
     return (
@@ -55,7 +57,7 @@ export function App() {
 
   return (
     <BrowserRouter>
-      <Layout username={auth.user.username} onSignOut={signOut}>
+      <Layout username={auth.user.username} onSignOut={signOut} onSessionEnded={sessionEnded}>
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/calls" element={<CallsPage />} />

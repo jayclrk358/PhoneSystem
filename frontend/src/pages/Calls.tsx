@@ -62,7 +62,11 @@ export function CallsPage() {
   const { start, end } = useMemo(() => dateRange(preset, from, to), [preset, from, to, today]);
   const range = `start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`;
 
-  const stats = useApi<CallStats>(`/api/calls/stats?${range}&tz=${encodeURIComponent(TZ)}`, 15000);
+  const stats = useApi<CallStats>(`/api/calls/stats?${range}&tz=${encodeURIComponent(TZ)}`, 15000, [
+    "calls",
+    "extensions",
+    "phones",
+  ]);
 
   // Search box: type freely, query after a short pause.
   const [search, setSearch] = useState(q);
@@ -82,6 +86,7 @@ export function CallsPage() {
   const log = useApi<CallPage>(
     `/api/calls?${range}${filterQs ? `&${filterQs}` : ""}&page=${page}&page_size=${PAGE_SIZE}`,
     15000,
+    ["calls"],
   );
   const exportHref = `/api/calls/export.csv?${range}${filterQs ? `&${filterQs}` : ""}`;
 

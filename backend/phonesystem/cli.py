@@ -73,7 +73,10 @@ async def _serve(cfg: AppConfig) -> None:
     # uvicorn only reports a busy port after startup; check the web port first
     # so every port problem gets the same clear message.
     _check_tcp_port(cfg.admin_host, cfg.admin_port, "web UI", "PHONESYSTEM_ADMIN_PORT")
-    prov = ProvisioningServer(ProvisioningService(db, FirmwareStore(cfg.firmware_dir)))
+    state = app.state.phonesystem
+    prov = ProvisioningServer(
+        ProvisioningService(db, FirmwareStore(cfg.firmware_dir), notify=state.bus.publish)
+    )
     try:
         prov_server = await prov.start(cfg.provisioning_host, cfg.provisioning_port)
     except OSError as exc:
@@ -83,7 +86,7 @@ async def _serve(cfg: AppConfig) -> None:
     syslog_transport = None
     if cfg.syslog_port:
         try:
-            syslog_transport = await SyslogReceiver(db).start(
+            syslog_transport = await SyslogReceiver(db, notify=state.bus.publish).start(
                 cfg.provisioning_host, cfg.syslog_port
             )
         except OSError as exc:
@@ -102,15 +105,19 @@ async def _serve(cfg: AppConfig) -> None:
             log_level="info",
             proxy_headers=False,
             server_header=False,
+            # Live-update streams stay open; don't let them hold up a restart.
+            timeout_graceful_shutdown=3,
         )
     )
-    importer = asyncio.create_task(_import_calls_forever(app.state.phonesystem.cdr_importer, cfg))
+    importer = asyncio.create_task(_import_calls_forever(state.cdr_importer, cfg))
+    watcher = asyncio.create_task(_watch_registrations(state))
     scheme = "https" if cfg.tls_cert else "http"
     log.info("web UI on %s://%s:%s", scheme, cfg.admin_host, cfg.admin_port)
     try:
         await web.serve()
     finally:
         importer.cancel()
+        watcher.cancel()
         prov_server.close()
         if syslog_transport:
             syslog_transport.close()
@@ -127,6 +134,38 @@ async def _import_calls_forever(importer, cfg: AppConfig) -> None:
         except Exception:
             log.exception("importing call records failed")
         await asyncio.sleep(cfg.cdr_import_interval)
+
+
+async def _watch_registrations(state, interval: float = 3.0) -> None:
+    """Tell live pages when phones register/unregister or Asterisk goes up/down.
+
+    Only polls Asterisk while someone has the web UI open.
+    """
+    from .services.ami import AmiError, list_contacts, list_endpoints
+    from .services.events import status_snapshot
+
+    def snapshot():
+        try:
+            with state.config_manager.ami_factory() as ami:
+                return status_snapshot(list_contacts(ami), list_endpoints(ami))
+        except AmiError:
+            return "asterisk unreachable"
+
+    last = None
+    while True:
+        await asyncio.sleep(interval)
+        if not state.bus.subscriber_count:
+            last = None
+            continue
+        try:
+            current = await asyncio.to_thread(snapshot)
+        except Exception:
+            log.exception("checking registrations failed")
+            continue
+        if last is not None and current != last:
+            state.status_cache = None  # /api/status must not answer from its cache
+            state.bus.publish("status")
+        last = current
 
 
 def _check_tcp_port(host: str, port: int, what: str, env_var: str) -> None:

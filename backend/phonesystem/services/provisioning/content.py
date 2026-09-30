@@ -12,6 +12,7 @@ from ...db import Database
 from ...models import Extension, Phone, ProvisioningRequest
 from ...validation import check_extension_number, check_sip_password, format_mac
 from .. import system_settings
+from ..events import Notify
 from ..firmware import FirmwareStore
 from ..templating import env
 from . import identify
@@ -101,10 +102,17 @@ def upgrade_script(firmware: FirmwareStore) -> bytes:
 class ProvisioningService:
     """Synchronous logic behind the provisioning HTTP server."""
 
-    def __init__(self, db: Database, firmware: FirmwareStore, arp_table: Path = identify.ARP_TABLE):
+    def __init__(
+        self,
+        db: Database,
+        firmware: FirmwareStore,
+        arp_table: Path = identify.ARP_TABLE,
+        notify: Notify | None = None,
+    ):
         self.db = db
         self.firmware = firmware
         self.arp_table = arp_table
+        self.notify = notify
         self._inserts = 0
 
     def identify(self, ip: str, user_agent: str | None) -> Identity:
@@ -158,6 +166,10 @@ class ProvisioningService:
                         ProvisioningRequest.id <= newest - KEEP_REQUEST_ROWS
                     )
                 )
+        # After the commit, so browsers that refresh see the new rows.
+        if self.notify:
+            topics = ("provisioning", "phones") if mac else ("provisioning",)
+            self.notify(*topics)
 
     @staticmethod
     def _seen(session: Session, mac: str, ip: str, user_agent: str | None, now: datetime) -> None:

@@ -7,7 +7,7 @@ import { useAction, useApi } from "../hooks";
 const STATUS_KIND = { applied: "ok", superseded: "muted", failed: "bad", pending: "warn" } as const;
 
 export function ConfigPage() {
-  const versions = useApi<ConfigVersion[]>("/api/config/versions");
+  const versions = useApi<ConfigVersion[]>("/api/config/versions", undefined, ["config"]);
   const [preview, setPreview] = useState(false);
   const [confirm, setConfirm] = useState<number | null>(null);
   const { busy, error, run } = useAction();
@@ -111,7 +111,7 @@ function ConfigPreview({ onClose }: { onClose: () => void }) {
 }
 
 export function ActivityPage() {
-  const entries = useApi<AuditEntry[]>("/api/audit?limit=300", 15000);
+  const entries = useApi<AuditEntry[]>("/api/audit?limit=300", 15000, ["audit"]);
   return (
     <>
       <PageHeader title="Activity" />

@@ -5,8 +5,8 @@ import { ErrorNote, Field, Loading, Modal, Note, PageHeader, Pill, Secret } from
 import { useAction, useApi } from "../hooks";
 
 export function ExtensionsPage() {
-  const list = useApi<Extension[]>("/api/extensions");
-  const status = useApi<LiveStatus>("/api/status", 10000);
+  const list = useApi<Extension[]>("/api/extensions", undefined, ["extensions", "phones"]);
+  const status = useApi<LiveStatus>("/api/status", 10000, ["status"]);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
 

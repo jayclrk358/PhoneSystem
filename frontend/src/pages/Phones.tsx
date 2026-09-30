@@ -13,9 +13,11 @@ import { formatBytes, formatMac, formatTime, timeAgo } from "../format";
 import { useAction, useApi } from "../hooks";
 
 export function PhonesPage() {
-  const phones = useApi<Phone[]>("/api/phones", 10000);
-  const status = useApi<LiveStatus>("/api/status", 10000);
-  const unknown = useApi<ProvisioningRequest[]>("/api/provisioning/requests?limit=200", 10000);
+  const phones = useApi<Phone[]>("/api/phones", 10000, ["phones", "extensions"]);
+  const status = useApi<LiveStatus>("/api/status", 10000, ["status"]);
+  const unknown = useApi<ProvisioningRequest[]>("/api/provisioning/requests?limit=200", 10000, [
+    "provisioning",
+  ]);
   const [adding, setAdding] = useState(false);
 
   const registered = new Set((status.data?.registrations ?? []).map((r) => r.endpoint));
@@ -145,7 +147,7 @@ function ExtensionSelect({
   onChange: (v: number | null) => void;
   currentPhoneId?: number;
 }) {
-  const exts = useApi<Extension[]>("/api/extensions");
+  const exts = useApi<Extension[]>("/api/extensions", undefined, ["extensions", "phones"]);
   return (
     <select value={value ?? ""} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}>
       <option value="">Not assigned</option>
@@ -206,12 +208,18 @@ function AddPhone({ onClose, onAdded }: { onClose: () => void; onAdded: () => vo
 export function PhoneDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const phones = useApi<Phone[]>("/api/phones", 10000);
+  const phones = useApi<Phone[]>("/api/phones", 10000, ["phones", "extensions"]);
   const current = (phones.data ?? []).find((p) => String(p.id) === id);
-  const requests = useApi<ProvisioningRequest[]>(`/api/phones/${id}/requests?limit=50`, 10000);
-  const logs = useApi<LogLine[]>(`/api/phones/${id}/logs?limit=200`, 10000);
+  const requests = useApi<ProvisioningRequest[]>(`/api/phones/${id}/requests?limit=50`, 10000, [
+    "provisioning",
+  ]);
+  const logs = useApi<LogLine[]>(`/api/phones/${id}/logs?limit=200`, 10000, ["phone_logs"]);
   const [reveal, setReveal] = useState(false);
-  const settingsFile = useApi<{ content: string }>(`/api/phones/${id}/settings-file${reveal ? "?reveal=true" : ""}`);
+  const settingsFile = useApi<{ content: string }>(
+    `/api/phones/${id}/settings-file${reveal ? "?reveal=true" : ""}`,
+    undefined,
+    ["phones", "extensions", "settings"],
+  );
   const [label, setLabel] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const { busy, error, run } = useAction();

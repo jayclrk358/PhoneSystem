@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select
 
 from ..db import Database
 from ..models import PhoneLogLine
+from .events import Notify
 
 log = logging.getLogger(__name__)
 
@@ -33,8 +34,9 @@ def clean_message(data: bytes) -> str:
 
 
 class SyslogReceiver(asyncio.DatagramProtocol):
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, notify: Notify | None = None):
         self.db = db
+        self.notify = notify
         self.queue: list[tuple[datetime, str, str]] = []
         self._budget: dict[str, tuple[int, int]] = {}  # ip -> (second, count)
         self._flusher: asyncio.Task | None = None
@@ -79,3 +81,5 @@ class SyslogReceiver(asyncio.DatagramProtocol):
             if self._flushes % 30 == 0:
                 newest = session.scalar(select(func.max(PhoneLogLine.id))) or 0
                 session.execute(delete(PhoneLogLine).where(PhoneLogLine.id <= newest - KEEP_LINES))
+        if self.notify:
+            self.notify("phone_logs")

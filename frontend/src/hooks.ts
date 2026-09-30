@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { isLiveConnected, onLive, onLiveState, type Topic } from "./live";
 
 export interface Loaded<T> {
   data: T | null;
@@ -8,8 +9,25 @@ export interface Loaded<T> {
   reload: () => void;
 }
 
-/** GET a path and keep the result; optionally refresh every ``intervalMs``. */
-export function useApi<T>(path: string | null, intervalMs?: number): Loaded<T> {
+/** Whether the live-update connection is up. */
+export function useLiveConnected(): boolean {
+  const [connected, setConnected] = useState(isLiveConnected());
+  useEffect(() => onLiveState(setConnected), []);
+  return connected;
+}
+
+/**
+ * GET a path and keep the result.
+ *
+ * ``live``: reload whenever the server says one of these topics changed. While
+ * the live connection is down, fall back to polling every ``intervalMs``
+ * (default 30 s). Without ``live``, poll every ``intervalMs`` if given.
+ */
+export function useApi<T>(
+  path: string | null,
+  intervalMs?: number,
+  live?: readonly Topic[],
+): Loaded<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(path !== null);
@@ -35,11 +53,19 @@ export function useApi<T>(path: string | null, intervalMs?: number): Loaded<T> {
     };
   }, [path, tick]);
 
+  const liveKey = live?.join(",") ?? "";
   useEffect(() => {
-    if (!intervalMs) return;
-    const id = window.setInterval(reload, intervalMs);
+    if (!liveKey) return;
+    return onLive(liveKey.split(",") as Topic[], reload);
+  }, [liveKey, reload]);
+
+  const liveConnected = useLiveConnected();
+  const pollMs = live ? (liveConnected ? 0 : (intervalMs ?? 30000)) : intervalMs;
+  useEffect(() => {
+    if (!pollMs) return;
+    const id = window.setInterval(reload, pollMs);
     return () => window.clearInterval(id);
-  }, [intervalMs, reload]);
+  }, [pollMs, reload]);
 
   return { data, error, loading, reload };
 }

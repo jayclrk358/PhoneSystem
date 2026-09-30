@@ -1,7 +1,8 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { api, type ConfigStatus, onConfigChange } from "../api";
-import { useAction } from "../hooks";
+import { useAction, useLiveConnected } from "../hooks";
+import { onLive, startLive, stopLive } from "../live";
 import { ChangePassword } from "../pages/Account";
 
 const NAV = [
@@ -18,14 +19,22 @@ const NAV = [
 export function Layout({
   username,
   onSignOut,
+  onSessionEnded,
   children,
 }: {
   username: string;
   onSignOut: () => void;
+  /** The server ended the session (signed out elsewhere, expired). */
+  onSessionEnded: () => void;
   children: ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
+
+  useEffect(() => {
+    startLive(onSessionEnded);
+    return stopLive;
+  }, [onSessionEnded]);
   return (
     <div className="shell">
       <header className="topbar">
@@ -44,6 +53,7 @@ export function Layout({
           PhoneSystem
         </div>
         <div className="topbar-user">
+          <LiveIndicator />
           <span className="muted">{username}</span>
           <button type="button" className="btn btn-small btn-ghost" onClick={() => setPwOpen(true)}>
             Password
@@ -69,6 +79,24 @@ export function Layout({
   );
 }
 
+/** Whether pages update by themselves right now. */
+function LiveIndicator() {
+  const connected = useLiveConnected();
+  return (
+    <span
+      className={`live ${connected ? "live-on" : "live-off"}`}
+      title={
+        connected
+          ? "Pages update by themselves as calls and changes happen."
+          : "Reconnecting… pages refresh every 30 seconds meanwhile."
+      }
+    >
+      <span className="live-dot" aria-hidden />
+      {connected ? "Live" : "Reconnecting"}
+    </span>
+  );
+}
+
 /** Shows when the database has changes Asterisk isn't running yet. */
 function PendingBanner() {
   const [status, setStatus] = useState<ConfigStatus | null>(null);
@@ -86,9 +114,11 @@ function PendingBanner() {
     };
     refresh();
     const unsubscribe = onConfigChange(refresh);
+    const unsubscribeLive = onLive(["config", "extensions", "settings"], refresh);
     const interval = window.setInterval(refresh, 15000);
     return () => {
       unsubscribe();
+      unsubscribeLive();
       window.clearInterval(interval);
       window.clearTimeout(timer);
     };

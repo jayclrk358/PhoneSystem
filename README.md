@@ -22,6 +22,13 @@ button remapping, screen customization, …).
 - Phone logs (syslog) and every provisioning request are visible per phone.
 - Changes go live with **Apply changes**. Every applied config is versioned;
   a failed reload is rolled back automatically, and you can roll back by hand.
+- **Call tracking:** every call (answered, missed, busy, failed) is logged and
+  labelled incoming / outgoing external / internal. Search or look up a number,
+  filter by extension, direction and result, export to CSV, and see totals,
+  calls per day and per-extension counts (made, received, missed, talk time).
+- **Live updates:** pages refresh themselves the moment something happens (a
+  call ends, a phone registers, fetches its settings or logs something, another
+  admin makes a change), with a "Live" indicator in the top bar.
 - Live status: which phones are registered and whether Asterisk is running.
 - Admin accounts, sign-in throttling, CSRF protection, audit log.
 

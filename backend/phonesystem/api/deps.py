@@ -11,6 +11,7 @@ from ..models import AdminUser
 from ..security import SESSION_COOKIE, LoginThrottle, user_for_token
 from ..services.calls import CdrImporter
 from ..services.confgen import ConfigManager
+from ..services.events import EventBus
 from ..services.firmware import FirmwareStore
 
 
@@ -22,6 +23,7 @@ class AppState:
     firmware: FirmwareStore
     login_throttle: LoginThrottle
     cdr_importer: CdrImporter
+    bus: EventBus
     # Last /api/status answer, so several open browser tabs don't each hit AMI.
     status_cache: tuple[float, dict] | None = None
 
