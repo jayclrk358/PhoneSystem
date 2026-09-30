@@ -9,6 +9,7 @@ from ..config import AppConfig
 from ..db import Database
 from ..models import AdminUser
 from ..security import SESSION_COOKIE, LoginThrottle, user_for_token
+from ..services.calls import CdrImporter
 from ..services.confgen import ConfigManager
 from ..services.firmware import FirmwareStore
 
@@ -20,6 +21,7 @@ class AppState:
     config_manager: ConfigManager
     firmware: FirmwareStore
     login_throttle: LoginThrottle
+    cdr_importer: CdrImporter
     # Last /api/status answer, so several open browser tabs don't each hit AMI.
     status_cache: tuple[float, dict] | None = None
 

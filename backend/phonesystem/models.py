@@ -8,6 +8,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -132,3 +133,40 @@ class PhoneLogLine(Base):
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     ip: Mapped[str] = mapped_column(String(45), index=True)
     message: Mapped[str] = mapped_column(Text)
+
+
+class CallRecord(Base):
+    """One call leg, imported from Asterisk's call records (CDR)."""
+
+    __tablename__ = "call_records"
+    __table_args__ = (UniqueConstraint("uniqueid", "sequence"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Asterisk's identifiers. Legs of the same call share linkedid.
+    uniqueid: Mapped[str] = mapped_column(String(64))
+    sequence: Mapped[int] = mapped_column(Integer)
+    linkedid: Mapped[str] = mapped_column(String(64), index=True)
+
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    duration: Mapped[int] = mapped_column(Integer)  # seconds from start to end
+    talk_seconds: Mapped[int] = mapped_column(Integer)  # seconds after answer
+
+    # internal | inbound | outbound
+    direction: Mapped[str] = mapped_column(String(10), index=True)
+    # answered | missed | busy | failed
+    status: Mapped[str] = mapped_column(String(10), index=True)
+    disposition: Mapped[str] = mapped_column(String(16))  # Asterisk's raw value
+
+    src_number: Mapped[str] = mapped_column(String(64), index=True)
+    src_name: Mapped[str] = mapped_column(String(128), default="")
+    dst_number: Mapped[str] = mapped_column(String(64), index=True)
+    from_extension: Mapped[str | None] = mapped_column(String(16), index=True)
+    to_extension: Mapped[str | None] = mapped_column(String(16), index=True)
+    trunk: Mapped[str | None] = mapped_column(String(64))
+
+    route: Mapped[str] = mapped_column(String(16), default="")
+    channel: Mapped[str] = mapped_column(String(128), default="")
+    dstchannel: Mapped[str] = mapped_column(String(128), default="")
+    lastapp: Mapped[str] = mapped_column(String(32), default="")

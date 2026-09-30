@@ -67,6 +67,9 @@ export function ExtensionsPage() {
                     )}
                   </td>
                   <td className="actions">
+                    <Link className="btn btn-small btn-ghost" to={`/calls?extension=${e.number}&range=30d`}>
+                      Calls
+                    </Link>{" "}
                     <button type="button" className="btn btn-small" onClick={() => setEditing(e.id)}>
                       Edit
                     </button>

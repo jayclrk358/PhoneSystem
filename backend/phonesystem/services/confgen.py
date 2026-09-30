@@ -110,13 +110,16 @@ class ConfigManager:
         except OSError:
             return None
 
+    def render(self, session: Session) -> RenderedConfig:
+        return render(session)
+
     def has_pending_changes(self, session: Session) -> bool:
-        return render(session).checksum != self.live_checksum()
+        return self.render(session).checksum != self.live_checksum()
 
     # -- apply / rollback ---------------------------------------------------
 
     def apply(self, session: Session, username: str) -> ConfigVersion:
-        rendered = render(session)
+        rendered = self.render(session)
         return self._activate(session, username, rendered, "")
 
     def rollback(self, session: Session, version_id: int, username: str) -> ConfigVersion:

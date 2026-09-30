@@ -270,8 +270,15 @@ if [[ ! -d $BACKUP ]]; then
   cp -a "$AST_ETC" "$BACKUP"
   echo "Original Asterisk config backed up to $BACKUP"
 fi
-for f in pjsip.conf extensions.conf modules.conf logger.conf rtp.conf; do
+for f in pjsip.conf extensions.conf modules.conf logger.conf rtp.conf cdr.conf cdr_custom.conf; do
   install -o asterisk -g asterisk -m 0640 "$REPO/asterisk/$f" "$AST_ETC/$f"
+done
+# Call records: Asterisk writes them, PhoneSystem (in the asterisk group)
+# imports them. Ubuntu leaves these folders readable by every user; they hold
+# who called whom, so close them to everyone else.
+usermod -a -G asterisk "$SERVICE_USER"
+for d in /var/log/asterisk/cdr-custom /var/log/asterisk/cdr-csv; do
+  install -d -o asterisk -g asterisk -m 0750 "$d"
 done
 sed "s/@AMI_SECRET@/$AMI_SECRET/" "$REPO/asterisk/manager.conf.in" >"$AST_ETC/manager.conf"
 chown asterisk:asterisk "$AST_ETC/manager.conf"

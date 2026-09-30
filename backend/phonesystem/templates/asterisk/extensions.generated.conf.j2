@@ -3,6 +3,8 @@
 [phonesystem-extensions]
 {% for ext in extensions %}
 exten => {{ ext.number }},hint,PJSIP/{{ ext.number }}
-exten => {{ ext.number }},1,Gosub(phonesystem-dial-extension,s,1({{ ext.number }}))
+exten => {{ ext.number }},1,Set(CDR(ps_dialed)=${EXTEN})
+ same => n,Set(CDR(ps_route)=extension)
+ same => n,Gosub(phonesystem-dial-extension,s,1({{ ext.number }}))
  same => n,Hangup()
 {% endfor %}

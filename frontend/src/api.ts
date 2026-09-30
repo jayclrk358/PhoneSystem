@@ -196,3 +196,74 @@ export interface AuditEntry {
   target: string;
   detail: Record<string, unknown> | null;
 }
+
+export type Direction = "inbound" | "outbound" | "internal";
+export type CallStatus = "answered" | "missed" | "busy" | "failed";
+
+export interface CallRecord {
+  id: number;
+  linkedid: string;
+  started_at: string;
+  answered_at: string | null;
+  ended_at: string;
+  direction: Direction;
+  status: CallStatus;
+  src_number: string;
+  src_name: string;
+  dst_number: string;
+  from_extension: string | null;
+  to_extension: string | null;
+  trunk: string | null;
+  talk_seconds: number;
+  duration: number;
+}
+
+export interface CallPage {
+  total: number;
+  items: CallRecord[];
+  lookup: {
+    total: number;
+    first_at: string | null;
+    last_at: string | null;
+    answered: number;
+    missed: number;
+  } | null;
+}
+
+export interface DailyCalls {
+  date: string;
+  inbound: number;
+  outbound: number;
+  internal: number;
+}
+
+export interface ExtensionCallStats {
+  extension: string;
+  name: string;
+  phone: string | null;
+  exists: boolean;
+  outgoing: number;
+  outgoing_external: number;
+  incoming: number;
+  incoming_external: number;
+  answered: number;
+  missed: number;
+  talk_seconds: number;
+}
+
+export interface CallStats {
+  totals: {
+    calls: number;
+    inbound: number;
+    outbound: number;
+    internal: number;
+    answered: number;
+    missed: number;
+    busy: number;
+    failed: number;
+    talk_seconds: number;
+    inbound_missed: number;
+  };
+  per_extension: ExtensionCallStats[];
+  daily: DailyCalls[];
+}

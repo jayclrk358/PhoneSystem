@@ -104,14 +104,29 @@ async def _serve(cfg: AppConfig) -> None:
             server_header=False,
         )
     )
+    importer = asyncio.create_task(_import_calls_forever(app.state.phonesystem.cdr_importer, cfg))
     scheme = "https" if cfg.tls_cert else "http"
     log.info("web UI on %s://%s:%s", scheme, cfg.admin_host, cfg.admin_port)
     try:
         await web.serve()
     finally:
+        importer.cancel()
         prov_server.close()
         if syslog_transport:
             syslog_transport.close()
+
+
+async def _import_calls_forever(importer, cfg: AppConfig) -> None:
+    """Pull finished calls from Asterisk's call records into the call log."""
+    log.info("importing call records from %s", cfg.cdr_file)
+    while True:
+        try:
+            count = await asyncio.to_thread(importer.import_new)
+            if count:
+                log.info("imported %d call record(s)", count)
+        except Exception:
+            log.exception("importing call records failed")
+        await asyncio.sleep(cfg.cdr_import_interval)
 
 
 def _check_tcp_port(host: str, port: int, what: str, env_var: str) -> None:
@@ -176,11 +191,11 @@ def cmd_apply(cfg: AppConfig, _args) -> int:
 
 
 def cmd_show_config(cfg: AppConfig, _args) -> int:
-    from .services.confgen import render
+    from .services.confgen import ConfigManager
 
     db = _prepare(cfg)
     with db.session() as session:
-        for name, text in render(session).files.items():
+        for name, text in ConfigManager(cfg).render(session).files.items():
             print(f";;;;;;;;;; {name}\n{text}")
     return 0
 

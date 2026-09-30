@@ -56,7 +56,15 @@ class AsteriskInstance:
         if moddir is None:
             raise RuntimeError("Asterisk modules directory not found")
         self.etc.mkdir(parents=True)
-        for name in ("pjsip.conf", "extensions.conf", "modules.conf", "logger.conf", "rtp.conf"):
+        for name in (
+            "pjsip.conf",
+            "extensions.conf",
+            "modules.conf",
+            "logger.conf",
+            "rtp.conf",
+            "cdr.conf",
+            "cdr_custom.conf",
+        ):
             shutil.copy(BASE_CONFIGS / name, self.etc / name)
         manager = (BASE_CONFIGS / "manager.conf.in").read_text()
         manager = manager.replace("@AMI_SECRET@", AMI_SECRET).replace(
@@ -69,6 +77,9 @@ class AsteriskInstance:
         for name in ("run", "log", "spool", "db", "cache"):
             (self.root / name).mkdir()
             dirs[name] = self.root / name
+        # Asterisk's CDR backends don't create their folders.
+        for sub in ("cdr-csv", "cdr-custom"):
+            (dirs["log"] / sub).mkdir()
         (self.etc / "asterisk.conf").write_text(
             "[directories]\n"
             f"astetcdir => {self.etc}\n"
@@ -103,6 +114,11 @@ class AsteriskInstance:
             except AmiError:
                 time.sleep(0.3)
         raise RuntimeError(f"asterisk didn't come up: {self.log_tail()}")
+
+    @property
+    def cdr_file(self) -> Path:
+        """Where cdr_custom writes PhoneSystem's call records for this instance."""
+        return self.root / "log" / "cdr-custom" / "phonesystem-calls.csv"
 
     def ami(self) -> AmiClient:
         return AmiClient("127.0.0.1", self.ami_port, AMI_USER, AMI_SECRET, timeout=5)

@@ -4,6 +4,7 @@ import { api, type AuthStatus, setUnauthorizedHandler } from "./api";
 import { Layout } from "./components/Layout";
 import { ErrorNote } from "./components/ui";
 import { LoginPage, SetupPage } from "./pages/Account";
+import { CallsPage } from "./pages/Calls";
 import { DashboardPage } from "./pages/Dashboard";
 import { ExtensionsPage } from "./pages/Extensions";
 import { FirmwarePage } from "./pages/Firmware";
@@ -57,6 +58,7 @@ export function App() {
       <Layout username={auth.user.username} onSignOut={signOut}>
         <Routes>
           <Route path="/" element={<DashboardPage />} />
+          <Route path="/calls" element={<CallsPage />} />
           <Route path="/extensions" element={<ExtensionsPage />} />
           <Route path="/phones" element={<PhonesPage />} />
           <Route path="/phones/:id" element={<PhoneDetailPage />} />

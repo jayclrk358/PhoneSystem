@@ -191,9 +191,9 @@ def config_rollback(
 
 
 @router.get("/config/preview")
-def config_preview(session: DbSession, _user: User) -> dict[str, str]:
+def config_preview(state: State, session: DbSession, _user: User) -> dict[str, str]:
     """The Asterisk config the current settings would generate (passwords hidden)."""
-    rendered = confgen.render(session)
+    rendered = state.config_manager.render(session)
     return {name: _SECRET_LINE.sub(r"\1********", text) for name, text in rendered.files.items()}
 
 

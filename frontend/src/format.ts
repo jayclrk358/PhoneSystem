@@ -40,3 +40,55 @@ export function option242(serverIp: string, port: number): string {
   parts.push("SIG=2");
   return parts.join(",");
 }
+
+/** 75 -> "1:15", 3725 -> "1:02:05". */
+export function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+}
+
+/** Exact talk time: "0 min", "45 min", "12 h 5 min". */
+export function formatTalkTime(seconds: number): string {
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+/** Compact talk time for a stat tile: "45 min", "4.9 h", "123 h". */
+export function formatTalkTimeShort(seconds: number): string {
+  const hours = seconds / 3600;
+  if (hours < 1) return `${Math.round(seconds / 60)} min`;
+  return hours < 100 ? `${hours.toFixed(1)} h` : `${Math.round(hours)} h`;
+}
+
+export type RangePreset = "today" | "7d" | "30d" | "90d" | "custom";
+
+/** Local-midnight date range for a preset: [start, end). Custom uses YYYY-MM-DD strings. */
+export function dateRange(
+  preset: RangePreset,
+  from?: string | null,
+  to?: string | null,
+  now: Date = new Date(),
+): { start: Date; end: Date } {
+  const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+  const today = midnight(now);
+  const tomorrow = addDays(today, 1);
+  if (preset === "custom" && from && to) {
+    const [fy, fm, fd] = from.split("-").map(Number);
+    const [ty, tm, td] = to.split("-").map(Number);
+    const start = new Date(fy!, fm! - 1, fd!);
+    const end = addDays(new Date(ty!, tm! - 1, td!), 1);
+    if (end > start) return { start, end };
+  }
+  const days = { today: 1, "7d": 7, "30d": 30, "90d": 90, custom: 7 }[preset];
+  return { start: addDays(today, -(days - 1)), end: tomorrow };
+}
+
+/** "2026-09-30" in local time. */
+export function isoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}

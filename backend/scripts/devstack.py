@@ -43,6 +43,7 @@ def main() -> int:
         PHONESYSTEM_PROVISIONING_PORT="8081",
         PHONESYSTEM_SYSLOG_PORT="5514",
         PHONESYSTEM_FRONTEND_DIST=str(dist),
+        PHONESYSTEM_CDR_FILE=str(asterisk.cdr_file),
     )
     app = subprocess.Popen([sys.executable, "-m", "phonesystem.cli", "serve"], env=env)  # noqa: S603
 

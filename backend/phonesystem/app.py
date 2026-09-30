@@ -6,11 +6,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import auth, extensions, phones, system
+from .api import auth, calls, extensions, phones, system
 from .api.deps import AppState
 from .config import AppConfig
 from .db import Database
 from .security import CSRF_HEADER, CSRF_VALUE, LoginThrottle
+from .services.calls import CdrImporter
 from .services.confgen import ConfigManager
 from .services.firmware import FirmwareStore
 
@@ -32,6 +33,7 @@ def create_app(
         config_manager=config_manager or ConfigManager(cfg),
         firmware=firmware,
         login_throttle=LoginThrottle(),
+        cdr_importer=CdrImporter(db, cfg.cdr_file),
     )
 
     @app.middleware("http")
@@ -51,7 +53,7 @@ def create_app(
         response.headers.setdefault("Referrer-Policy", "same-origin")
         return response
 
-    for module in (auth, extensions, phones, system):
+    for module in (auth, extensions, phones, calls, system):
         app.include_router(module.router)
 
     @app.get("/api/health", include_in_schema=False)

@@ -7,15 +7,18 @@ Needs the ``asterisk`` and ``sipp`` commands (Debian/Ubuntu: asterisk, sip-teste
 import shutil
 import subprocess
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import select
 
 from phonesystem.config import AppConfig
 from phonesystem.db import Database
 from phonesystem.migrate import upgrade
-from phonesystem.models import Extension
-from phonesystem.services import system_settings
+from phonesystem.models import CallRecord, Extension
+from phonesystem.services import calls, system_settings
 from phonesystem.services.ami import list_contacts, list_endpoints
 from phonesystem.services.confgen import ConfigManager
 
@@ -43,7 +46,9 @@ class Stack:
         upgrade(cfg.db_url)
         self.db = Database(cfg.db_url)
         self.asterisk = AsteriskInstance(root / "asterisk", cfg.current_config_link)
-        self.cfg = cfg.model_copy(update={"ami_port": self.asterisk.ami_port})
+        self.cfg = cfg.model_copy(
+            update={"ami_port": self.asterisk.ami_port, "cdr_file": self.asterisk.cdr_file}
+        )
         self.config = ConfigManager(self.cfg)
         self.sip_port = free_tcp_udp_port()
         with self.db.session() as s:
@@ -68,6 +73,60 @@ class Stack:
             "-trace_err", "-error_file", str(self.root / f"{name}_err.log"),
             *args,
         ]  # fmt: skip
+
+    def start_phone(self, ext: tuple[str, str, str], incoming: str) -> subprocess.Popen:
+        """Register ``ext`` over TCP; ``incoming`` is the SIPp scenario for calls to it."""
+        n = len(list(self.root.glob("phone*_msgs.log")))
+        proc = subprocess.Popen(  # noqa: S603
+            self.sipp(
+                "-sf",
+                str(SIPP / "register_and_wait.xml"),
+                "-oocsf",
+                str(SIPP / incoming),
+                "-s",
+                ext[0],
+                "-au",
+                ext[0],
+                "-ap",
+                ext[2],
+                name=f"phone{n}",
+            ),  # fmt: skip
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            with self.asterisk.ami() as ami:
+                if any(c.endpoint == ext[0] for c in list_contacts(ami)):
+                    return proc
+            time.sleep(0.2)
+        proc.kill()
+        raise AssertionError(f"{ext[0]} never registered")
+
+    def call(self, ext: tuple[str, str, str], number: str, scenario: str = "call.xml") -> int:
+        dest = self.root / "dest.csv"
+        dest.write_text(f"SEQUENTIAL\n{number};\n")
+        n = len(list(self.root.glob("call*_msgs.log")))
+        return subprocess.run(  # noqa: S603
+            self.sipp(
+                "-sf",
+                str(SIPP / scenario),
+                "-inf",
+                str(dest),
+                "-s",
+                ext[0],
+                "-au",
+                ext[0],
+                "-ap",
+                ext[2],
+                "-timeout",
+                "15",
+                name=f"call{n}",
+            ),  # fmt: skip
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        ).returncode
 
 
 @pytest.fixture
@@ -204,3 +263,54 @@ def test_wrong_password_is_rejected(stack: Stack):
     assert result.returncode != 0
     with stack.asterisk.ami() as ami:
         assert list_contacts(ami) == []
+
+
+def test_calls_are_recorded_and_labelled(stack: Stack):
+    """Real calls through Asterisk end up in the call log with the right labels."""
+    stack.add_extension(*ALICE)
+    stack.add_extension(*BOB)
+    stack.add_extension("103", "Carol", "cccccccc33333")  # never registers
+    stack.asterisk.start()
+    assert stack.apply().status == "applied"
+
+    bob = stack.start_phone(BOB, "answer.xml")
+    try:
+        assert stack.call(ALICE, "102") == 0  # answered
+    finally:
+        bob.kill()
+        bob.wait()
+    assert stack.call(ALICE, "103") != 0  # offline extension
+    assert stack.call(ALICE, "5551234") == 0  # not one of ours: "not in service"
+    assert stack.call(ALICE, "*43") == 0  # echo test
+
+    bob = stack.start_phone(BOB, "ring_only.xml")
+    try:
+        assert stack.call(ALICE, "102", "call_cancel.xml") == 0  # rings, nobody answers
+    finally:
+        bob.kill()
+
+    time.sleep(0.5)  # let Asterisk finish writing the last record
+    importer = calls.CdrImporter(stack.db, stack.asterisk.cdr_file)
+    assert importer.import_new() == 5
+    assert importer.import_new() == 0
+    with stack.db.session() as s:
+        rows = s.scalars(select(CallRecord).order_by(CallRecord.started_at)).all()
+        got = [
+            (r.dst_number, r.direction, r.status, r.from_extension, r.to_extension) for r in rows
+        ]
+        assert got == [
+            ("102", "internal", "answered", "101", "102"),
+            ("103", "internal", "failed", "101", "103"),
+            ("5551234", "outbound", "failed", "101", None),
+            ("*43", "internal", "answered", "101", None),
+            ("102", "internal", "missed", "101", "102"),
+        ]
+        assert rows[0].src_name == "Alice"
+        assert rows[0].talk_seconds >= 1
+        totals = calls.stats(
+            s,
+            rows[0].started_at.replace(tzinfo=UTC) - timedelta(minutes=1),
+            datetime.now(UTC) + timedelta(minutes=1),
+            ZoneInfo("UTC"),
+        )["totals"]
+    assert (totals["calls"], totals["answered"], totals["missed"], totals["failed"]) == (5, 2, 1, 2)

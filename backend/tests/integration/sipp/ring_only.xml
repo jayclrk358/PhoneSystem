@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<!-- A phone that rings but is never picked up: answer 180 to an incoming
+     call and wait for the caller to give up (CANCEL). OPTIONS (qualify)
+     requests get a 200. Used as the out-of-call scenario (-oocsf). -->
+<scenario name="ring only">
+  <recv request="INVITE|OPTIONS" regexp_match="true">
+    <action>
+      <ereg regexp="^OPTIONS" search_in="msg" check_it="false" assign_to="is_options"/>
+      <!-- The 487 must carry the INVITE's CSeq (e.g. "4561 INVITE"). -->
+      <ereg regexp="[0-9]+ INVITE" search_in="hdr" header="CSeq:" check_it="false" assign_to="invite_cseq"/>
+    </action>
+  </recv>
+
+  <nop next="options" test="is_options"/>
+
+  <send>
+    <![CDATA[
+      SIP/2.0 180 Ringing
+      [last_Via:]
+      [last_From:]
+      [last_To:];tag=[pid]SIPpTag03[call_number]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Contact: <sip:[service]@[local_ip]:[local_port];transport=[transport]>
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv request="CANCEL"/>
+
+  <send>
+    <![CDATA[
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:];tag=[pid]SIPpTag03[call_number]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <send>
+    <![CDATA[
+      SIP/2.0 487 Request Terminated
+      [last_Via:]
+      [last_From:]
+      [last_To:];tag=[pid]SIPpTag03[call_number]
+      [last_Call-ID:]
+      CSeq: [$invite_cseq]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv request="ACK"/>
+  <nop next="end"/>
+
+  <label id="options"/>
+  <send>
+    <![CDATA[
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:];tag=[pid]SIPpTag04[call_number]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Content-Length: 0
+
+    ]]>
+  </send>
+  <label id="end"/>
+</scenario>

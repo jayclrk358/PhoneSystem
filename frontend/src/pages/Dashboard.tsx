@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import type {
+  CallStats,
   Extension,
   FirmwareInfo,
   LiveStatus,
@@ -8,7 +9,7 @@ import type {
   Settings,
 } from "../api";
 import { CopyButton, ErrorNote, PageHeader, Pill } from "../components/ui";
-import { formatMac, option242, timeAgo } from "../format";
+import { dateRange, formatMac, option242, timeAgo } from "../format";
 import { useApi } from "../hooks";
 
 export function DashboardPage() {
@@ -18,6 +19,13 @@ export function DashboardPage() {
   const settings = useApi<Settings>("/api/settings");
   const firmware = useApi<FirmwareInfo>("/api/firmware");
   const requests = useApi<ProvisioningRequest[]>("/api/provisioning/requests?limit=8", 10000);
+  const today = dateRange("today");
+  const calls = useApi<CallStats>(
+    `/api/calls/stats?start=${encodeURIComponent(today.start.toISOString())}` +
+      `&end=${encodeURIComponent(today.end.toISOString())}` +
+      `&tz=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC")}`,
+    15000,
+  );
 
   const exts = extensions.data ?? [];
   const nameOf = new Map(exts.map((e) => [e.number, e.name]));
@@ -103,6 +111,15 @@ export function DashboardPage() {
           <span className="stat-label">Extensions</span>
           <span className="stat-value">{exts.length}</span>
         </div>
+        <Link to="/calls?range=today" className="stat card stat-link">
+          <span className="stat-label">Calls today</span>
+          <span className="stat-value">{calls.data?.totals.calls ?? "…"}</span>
+          <span className="stat-sub">
+            {calls.data
+              ? `${calls.data.totals.inbound} in · ${calls.data.totals.outbound} out · ${calls.data.totals.missed + calls.data.totals.busy} missed`
+              : ""}
+          </span>
+        </Link>
         <div className="stat card">
           <span className="stat-label">Registered now</span>
           <span className="stat-value">{regs.length}</span>

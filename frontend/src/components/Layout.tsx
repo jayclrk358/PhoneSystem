@@ -6,6 +6,7 @@ import { ChangePassword } from "../pages/Account";
 
 const NAV = [
   { to: "/", label: "Dashboard", end: true },
+  { to: "/calls", label: "Calls" },
   { to: "/extensions", label: "Extensions" },
   { to: "/phones", label: "Phones" },
   { to: "/firmware", label: "Firmware" },

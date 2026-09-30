@@ -8,6 +8,8 @@ Wants=network-online.target asterisk.service
 Type=simple
 User=phonesystem
 Group=phonesystem
+# To read Asterisk's call records (/var/log/asterisk/cdr-custom).
+SupplementaryGroups=asterisk
 EnvironmentFile=/etc/phonesystem/phonesystem.env
 ExecStart=/opt/phonesystem/venv/bin/phonesystem serve
 Restart=on-failure
