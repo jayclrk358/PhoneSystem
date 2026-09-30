@@ -30,9 +30,16 @@ The installer:
 
 Run it again later to upgrade; your data and settings are kept.
 
-The web UI is built during install if Node.js 20+ is available. Otherwise build
-it on any machine with `cd frontend && npm ci && npm run build` and copy
-`frontend/dist` over before installing.
+The installer also builds the web UI. If the machine doesn't have Node.js 20 or
+newer (Ubuntu 24.04's own package is too old), it downloads Node.js 22 from
+nodejs.org, checks it against the published checksum, and keeps it in
+`/opt/phonesystem/build-tools/`. It is only used for the build and doesn't
+change the rest of the system. The build runs as the unprivileged `phonesystem`
+user in a temporary folder, so your checkout stays untouched.
+
+No internet access to nodejs.org and npm? Build the UI on another machine with
+`cd frontend && npm ci && npm run build`, copy the `dist` folder over, and run
+`sudo ./deploy/install.sh --ui-dist /path/to/dist`.
 
 ## 2. First login
 
